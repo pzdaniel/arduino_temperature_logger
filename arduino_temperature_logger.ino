@@ -26,7 +26,7 @@ DeviceAddress myAddresses[] = {
 // set some variables
 boolean moduleOk = 0; // my ESP8266 modules crash sometimes. If they do, the moduleOk var is turned to 0
 boolean wifiReady = 0; // 1 if module is ready (AT+RST)
-boolean wifiConnected = 0; // 1 if the wifi is connected to the AP
+boolean wifiConnected = 0; // 1 if the wifi is connected to the AP - not very useful in this code but will be used in following projects for receiving data
 
 byte pinStatus = 13; // is turned on if the module is connected (wifiConnected = 1)
 unsigned long updateInterval = 60000;  // update intervall for temperature to thingspeak.com in milliseconds
@@ -53,21 +53,22 @@ void loop() {
     moduleInit(); // if crashed, reboot and reconnect (very harsh mode. If you know a better method, please let me know!)
   }
    
-  if ( (unsigned long)(millis() - time) >= updateInterval ) {
+  if ( (unsigned long)(millis() - time) >= updateInterval ) { // use it like this to compensate the millis() reset after 50 days. This way it will continue to work.
     sensors.requestTemperatures();
-    String tempstring="";
+    String tempstring=""; // build the "&fieldX=tempC" string with the temperatures
     for(int i=0; i<sizeof(myAddresses)/8; i++){
       float tempC = sensors.getTempC(myAddresses[i]);
       char buffer[20];
-      String string = dtostrf(tempC, 0, 3, buffer);
+      String tempCString = dtostrf(tempC, 0, 3, buffer); // convert the tempC float to string
       tempstring += "&field";
       tempstring += i+1;
       tempstring += "=";
-      tempstring += string;
-      monitor.print("Current temperature ");
-      monitor.print(i+1);
+      tempstring += tempCString;
+      monitor.print(getTimeStamp(millis()));
+      monitor.print(" Current temperature ");
+      monitor.print(i+1); // device number, counting from 1
       monitor.print(" in C: ");
-      monitor.println(string);
+      monitor.println(tempCString);
     }
     time = updateTemp(tempstring);
   }
@@ -90,7 +91,7 @@ boolean wifiReset(){
 
 // Connect the ESP8266 to your access point and return TRUE if connection is established
 boolean wifiConnect(){
-  dbgPrint("AT+CWMODE=2\r\n"); // set wifi mode to (Sta (1), AP (2), both (3))
+  dbgPrint("AT+CWMODE=1\r\n"); // set wifi mode to (Sta (1), AP (2), both (3))
   delay(1000);
   // Connect to AP with given password
   if( Serial.find("OK") || Serial.find("no change") ){
@@ -129,8 +130,13 @@ void moduleInit() {
   while (!wifiConnected) {
       digitalWrite(pinStatus, LOW);
       wifiConnected = wifiConnect(); // connect WiFi. If connection is established turn ledStatus on
-      delay(1000);
+      delay(2000);
   }
+  
+  // set multiple connections
+  dbgPrint("AT+CIPMUX=1\r\n");
+  delay(1000);
+  
 }
 
 // post the temperature to the thingspeak server
@@ -144,7 +150,8 @@ unsigned long updateTemp(String temp) {
   dbgPrint(cmd);
   delay(2000);
   if(Serial.find("Error")){
-    monitor.print("RECEIVED: Error");
+    monitor.print(getTimeStamp(millis()));
+    monitor.print(" RECEIVED: Error");
     moduleOk = 0; // will reset the module at the beginning of the next loop. Very harsh and probably unnecessary at this time but also reliable.
     return millis();
   }
@@ -160,18 +167,22 @@ unsigned long updateTemp(String temp) {
   dbgPrint(cmd1);
   if(Serial.find(">")){
     monitor.print(">");
-    dbgPrint(cmd);
+    monitor.print(cmd);
+    Serial.print(cmd);
   } else { // if there are ERRORS
     dbgPrint("AT+CIPCLOSE=4\r\n"); // close data port 4
-    monitor.println("connection timeout");
+    monitor.print(getTimeStamp(millis()));
+    monitor.println(" connection timeout");
     moduleOk = 0; // will reset the module at the beginning of the next loop. Very harsh method but also reliable.
     return millis();
   }
   // string should have been sent
   if(Serial.find("OK")){
-    monitor.println("RECEIVED: OK");
+    monitor.print(getTimeStamp(millis()));
+    monitor.println(" RECEIVED: OK");
   }else{
-    monitor.println("RECEIVED: Error while sending data.");
+    monitor.print(getTimeStamp(millis()));
+    monitor.println(" RECEIVED: Error while sending data.");
     moduleOk = 0; // will reset the module at the beginning of the next loop. Very harsh method but also reliable.
   }
   return millis();
@@ -179,8 +190,8 @@ unsigned long updateTemp(String temp) {
 
 
 // return the current running time (millis()) in the HHHH:MM:SS format
-String getRunningTime(){
-  unsigned long sec = (unsigned long)millis()/1000; // seconds counted from the boot of the arduino up to 50days, then resets to 0 and starts over again
+String getRunningTime(unsigned long time){
+  unsigned long sec = (unsigned long)time/1000; // seconds counted from the boot of the arduino up to 50days, then resets to 0 and starts over again
   static char str[12];
   long h = sec / 3600;
   sec = sec % 3600;
@@ -190,12 +201,20 @@ String getRunningTime(){
   return str;
 }
 
+// generate a time stamp like "[HHHH:MM:SS]"
+String getTimeStamp(unsigned long time){
+  String tmp = "";
+  tmp += "[";
+  tmp += getRunningTime(time);
+  tmp += "]";
+  return tmp;
+}
+
 
 // Send command to Serial and monitor
 void dbgPrint(String cmd) {
-  monitor.print("[");
-  monitor.print(getRunningTime());
-  monitor.print("] SEND: ");
+  monitor.print(getTimeStamp(millis()));
+  monitor.print(" SEND: ");
   monitor.print(cmd);
   Serial.print(cmd);
 }
